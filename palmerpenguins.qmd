@@ -1,0 +1,98 @@
+---
+title: "PalmerPenguins"
+format: gfm
+editor: visual
+---
+
+This time, we will build a XGboost model to classify the gender of palmer penguins dataset. We also gonna use resampling method to measure how well our model performance.
+
+## Load library
+
+```{r}
+#| warning: false
+#| message: false
+
+library(tidyverse) 
+library(tidymodels) 
+library(palmerpenguins) 
+library(vip)
+```
+
+## Dataset
+
+```{r}
+penguin_df <- penguins
+glimpse(penguin_df)
+```
+
+## Viz the dataset
+
+From the visualization, we can say that male penguin bigger than female penguin in terms of body mass and flipper lenght.
+
+```{r}
+penguin_df <- penguin_df |>
+  drop_na(sex) |>
+  select(-year, -island)
+
+penguin_df |> ggplot(aes(bill_length_mm, bill_depth_mm, color = sex)) +
+  geom_point() +
+  facet_wrap(~species)
+
+penguin_df |> ggplot(aes(species, body_mass_g, color = sex)) +
+  geom_boxplot()
+
+penguin_df |> ggplot(aes(flipper_length_mm, body_mass_g, color = sex)) +
+  geom_point() +
+  facet_wrap(~species)
+```
+
+## Build a model
+
+Before we build model, we split the data into training set and testing set. After that, we use resampling method called V-fold cross validation (CV) and build a xgboost model. For preprocessing, we impute the missing data with median and then normalize the numeric predictors and create dummy variable for categorical predictors.
+
+```{r}
+#| warning: false
+
+set.seed(99)
+penguin_split <- initial_split(penguin_df, prop = 0.7, strata = sex)
+penguin_train <- training(penguin_split)
+penguin_test <- testing(penguin_split)
+
+penguin_fold <- vfold_cv(data = penguin_train, strata = sex)
+
+bt_spec <- boost_tree() |>
+  set_mode("classification") |>
+  set_engine("xgboost")
+
+penguin_recipe <- recipe(sex ~ ., data = penguin_train) |>
+  step_impute_median(all_numeric_predictors()) |>
+  step_normalize(all_numeric_predictors()) |>
+  step_dummy(all_nominal_predictors())
+
+penguin_wf <- workflow() |>
+  add_recipe(penguin_recipe) |>
+  add_model(bt_spec)
+
+bt_fit <- penguin_wf |> fit_resamples(resamples = penguin_fold, control = control_resamples(save_pred = TRUE))
+```
+
+## Evaluating the model
+
+As we can see, there are 10 results created from the resampling. Last, we fit the test data and evaluate the model with accuracy and ROC, also create confusion matrix
+
+```{r}
+collect_metrics(bt_fit, summarize = FALSE)
+
+penguin_final <- penguin_wf |>
+  last_fit(penguin_split)
+
+collect_metrics(penguin_final)
+
+result <- collect_predictions(penguin_final)
+
+result |> conf_mat(sex, .pred_class)
+
+penguin_final |>
+  extract_fit_parsnip() |>
+  vip(aesthetics = list(fill = "navy"))
+```
